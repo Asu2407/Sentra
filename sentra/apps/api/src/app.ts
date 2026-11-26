@@ -217,6 +217,7 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          mediaSrc: ["'self'", "blob:"],
           imgSrc: ["'self'", "data:"],
           connectSrc: ["'self'"],
         },
@@ -1010,6 +1011,117 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
           `revoked API key ${revoked.id} (${revoked.name})`
         );
         res.json({ ok: true, record: revoked, audit });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // Dashboard email ingest + scam scan + voice summary demo
+  const ingestEmailSchema = z.object({
+    sender: z.string().trim().min(1).max(200),
+    subject: z.string().trim().min(1).max(200),
+    body: z.string().trim().min(1).max(4000),
+    visible_link: z.string().trim().max(500).optional(),
+    actual_link: z.string().trim().max(500).optional(),
+  });
+
+  app.post(
+    "/api/inbox/ingest",
+    actionLimiter,
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const parsed = ingestEmailSchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ detail: "sender, subject, and body are required" });
+          return;
+        }
+        const { sender, subject, body, visible_link, actual_link } = parsed.data;
+        const links =
+          visible_link && actual_link
+            ? [{ visible_text: visible_link, actual_url: actual_link }]
+            : null;
+        const scan = scamDetector.scanEmail(sender, subject, body, links);
+
+        let quarantined = false;
+        let quarantineId: string | null = null;
+        let audit = null;
+        const actor = req.approverSession?.sub ?? APPROVER_USER_ID;
+
+        if (scan.risk_level === "LIKELY_SCAM" || scan.risk_level === "SUSPICIOUS") {
+          quarantineId = `INGEST_${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+          await taintTracker.registerSource(`SRC_${quarantineId}`, "email", "LOW", sender);
+          await QuarantineItem.create({
+            _id: quarantineId,
+            id: quarantineId,
+            title: subject,
+            reason: scan.flags.slice(0, 2).join("; ") || scan.plain_warning,
+            status: "QUARANTINED",
+          });
+          quarantined = true;
+          audit = await auditLedger.append(
+            actor,
+            `quarantined ${quarantineId} (${sender}): ${scan.risk_level}`,
+            true
+          );
+        } else {
+          audit = await auditLedger.append(actor, `scanned safe email from ${sender}`);
+        }
+
+        res.json({ scan, quarantined, quarantine_id: quarantineId, audit });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // Humanized voice summary via ElevenLabs (requires session + CSRF, never exposes API key)
+  const speakBodySchema = z.object({
+    text: z.string().trim().min(1).max(1000),
+  });
+
+  app.post(
+    "/api/voice/speak",
+    actionLimiter,
+    requireAuth,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const parsed = speakBodySchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ detail: "text is required (1-1000 chars)" });
+          return;
+        }
+        const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+        if (!apiKey) {
+          res.status(503).json({ detail: "ElevenLabs voice is not configured" });
+          return;
+        }
+        const voiceId =
+          process.env.ELEVENLABS_VOICE_ID?.trim() || "21m00Tcm4TlvDq8ikWAM";
+        const ttsRes = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": apiKey,
+              "Content-Type": "application/json",
+              Accept: "audio/mpeg",
+            },
+            body: JSON.stringify({
+              text: parsed.data.text,
+              model_id: "eleven_turbo_v2_5",
+            }),
+          }
+        );
+        if (!ttsRes.ok) {
+          res.status(502).json({ detail: "ElevenLabs TTS request failed" });
+          return;
+        }
+        const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Cache-Control", "no-store");
+        res.send(audioBuffer);
       } catch (err) {
         next(err);
       }

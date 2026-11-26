@@ -7,6 +7,7 @@ import { SlipForm } from "../components/SlipForm.tsx";
 import { GatePanel } from "../components/GatePanel.tsx";
 import { PunchCard } from "../components/PunchCard.tsx";
 import { ApiKeysPanel } from "../components/ApiKeysPanel.tsx";
+import { InboxDemoPanel } from "../components/InboxDemoPanel.tsx";
 import type {
   AuditEntryView,
   ExecutionView,
@@ -288,6 +289,10 @@ export function Dashboard() {
       </main>
 
       {benchmark && <PunchCard blocked={benchmark.blocked} total={benchmark.total} />}
+
+      {csrf && (
+        <InboxDemoPanel csrf={csrf} onIngested={() => fetchState(false)} />
+      )}
 
       {csrf && <ApiKeysPanel csrf={csrf} />}
 

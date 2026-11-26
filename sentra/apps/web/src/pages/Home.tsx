@@ -2,6 +2,11 @@ import { Link } from "react-router-dom";
 import { Nav } from "../components/Nav.tsx";
 
 export function Home() {
+  const mcpUrl =
+    typeof window !== "undefined" && window.location?.origin
+      ? `${window.location.origin}/mcp`
+      : "http://127.0.0.1:8001/mcp";
+
   return (
     <>
       <Nav active="home" />
@@ -35,8 +40,9 @@ export function Home() {
             <li>
               <strong>Connect your MCP client (Antigravity, VS Code, or Cursor):</strong>{" "}
               point an HTTP MCP server to{" "}
-              <code>http://127.0.0.1:8001/mcp</code> (or your deployed{" "}
-              <code>/mcp</code> URL) — no local Node command needed.{" "}
+              <code>{mcpUrl}</code>{" "}
+              (with <code>Authorization: Bearer &lt;token&gt;</code>) — no local
+              Node command needed.{" "}
               <em>(Stdio via <code>sentra/apps/mcp/dist/server.js</code> is also supported.)</em>
             </li>
             <li>

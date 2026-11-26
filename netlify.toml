@@ -3,11 +3,7 @@
 [build]
   base = "sentra"
   publish = "apps/web/dist"
-  command = """
-    npm --workspace=@sentra/web run build && \
-    API_URL="${SENTRA_API_URL:-https://sentra-gateway.onrender.com}" && \
-    printf "/api/*  %s/api/:splat  200\n/mcp  %s/mcp  200\n/healthz  %s/healthz  200\n/*  /index.html  200\n" "$API_URL" "$API_URL" "$API_URL" > apps/web/dist/_redirects
-  """
+  command = "npm --workspace=@sentra/web run build && node -e \"const fs=require('fs');const u=(process.env.SENTRA_API_URL||'https://sentra-gateway.onrender.com').replace(/\\/+$/,'');fs.writeFileSync('apps/web/dist/_redirects',['/api/*  '+u+'/api/:splat  200!','/mcp  '+u+'/mcp  200!','/healthz  '+u+'/healthz  200!','/*  /index.html  200'].join('\\n')+'\\n');\""
   environment = { NODE_VERSION = "20" }
 
 [[redirects]]

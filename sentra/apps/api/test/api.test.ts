@@ -586,4 +586,49 @@ describe("Sentra Express API + Auth + E2E", () => {
       .send(mcpBody);
     expect(mcpRevoked.status).toBe(401);
   });
+
+  it("ingests a fishy email on /api/inbox/ingest, returns spoken_summary, and quarantines it", async () => {
+    const { app } = await createApp({ authConfig });
+    const agent = request.agent(app);
+
+    const noSess = await request(app).post("/api/inbox/ingest").send({
+      sender: "hr@internship-secure-portal.xyz",
+      subject: "Urgent",
+      body: "Send ID scan",
+    });
+    expect(noSess.status).toBe(401);
+
+    const loginRes = await agent.post("/api/login").send({ password });
+    const csrf = loginRes.body.csrf as string;
+
+    const ingestRes = await agent
+      .post("/api/inbox/ingest")
+      .set("X-Sentra-CSRF", csrf)
+      .send({
+        sender: "hr@internship-secure-portal.xyz",
+        subject: "Urgent internship confirmation",
+        body: "Act within 2 hours. Reply with your national ID scan and registration fee.",
+      });
+    expect(ingestRes.status).toBe(200);
+    expect(ingestRes.body.scan.risk_level).toBe("LIKELY_SCAM");
+    expect(typeof ingestRes.body.scan.spoken_summary).toBe("string");
+    expect(ingestRes.body.quarantined).toBe(true);
+
+    const stateRes = await agent.get("/api/state");
+    expect(
+      stateRes.body.quarantine.some(
+        (q: { id: string }) => q.id === ingestRes.body.quarantine_id
+      )
+    ).toBe(true);
+
+    // /api/voice/speak requires session + CSRF, and returns 503 when ELEVENLABS_API_KEY is unset
+    const unauthVoice = await request(app).post("/api/voice/speak").send({ text: "hello" });
+    expect(unauthVoice.status).toBe(401);
+
+    const noKeyVoice = await agent
+      .post("/api/voice/speak")
+      .set("X-Sentra-CSRF", csrf)
+      .send({ text: ingestRes.body.scan.spoken_summary });
+    expect(noKeyVoice.status).toBe(503);
+  });
 });
