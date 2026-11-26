@@ -7,6 +7,7 @@ import { SlipForm } from "../components/SlipForm.tsx";
 import { GatePanel } from "../components/GatePanel.tsx";
 import { PunchCard } from "../components/PunchCard.tsx";
 import { ApiKeysPanel } from "../components/ApiKeysPanel.tsx";
+import { ChaosField, type ChaosState } from "../components/ChaosField.tsx";
 import { InboxDemoPanel } from "../components/InboxDemoPanel.tsx";
 import { VoiceAgentPanel } from "../components/VoiceAgentPanel.tsx";
 import type {
@@ -36,6 +37,7 @@ export function Dashboard() {
   const [csrf, setCsrf] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<string | null>(null);
   const [mode, setMode] = useState<"sandbox" | "live">("sandbox");
+  const [chaosState, setChaosState] = useState<ChaosState>("idle");
   const [benchmark, setBenchmark] = useState<{ blocked: number; total: number } | null>(null);
 
   const animatingRef = useRef(false);
@@ -234,6 +236,7 @@ export function Dashboard() {
 
   return (
     <>
+      <ChaosField state={chaosState} />
       <Nav active="dashboard" />
       <AuthBar
         authenticated={!!csrf}
@@ -292,11 +295,19 @@ export function Dashboard() {
       {benchmark && <PunchCard blocked={benchmark.blocked} total={benchmark.total} />}
 
       {csrf && (
-        <VoiceAgentPanel csrf={csrf} onActionComplete={() => fetchState(false)} />
+        <VoiceAgentPanel
+          csrf={csrf}
+          onChaosChange={setChaosState}
+          onActionComplete={() => fetchState(false)}
+        />
       )}
 
       {csrf && (
-        <InboxDemoPanel csrf={csrf} onIngested={() => fetchState(false)} />
+        <InboxDemoPanel
+          csrf={csrf}
+          quarantineCount={quarantine.length}
+          onIngested={() => fetchState(false)}
+        />
       )}
 
       {csrf && <ApiKeysPanel csrf={csrf} />}

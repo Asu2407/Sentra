@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 interface ScanResult {
   sender: string;
@@ -18,18 +18,89 @@ const FISHY_PRESET = {
   actual_link: "http://internship-secure-portal.xyz/steal",
 };
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
+  );
+}
+
+function flagToChipLabel(flag: string): string {
+  const lower = flag.toLowerCase();
+  if (lower.includes("lookalike") || lower.includes("domain")) return "Look-alike domain";
+  if (lower.includes("urgent") || lower.includes("pressure")) return "Urgent pressure";
+  if (lower.includes("id") || lower.includes("credential") || lower.includes("fee")) {
+    return "Asks for ID";
+  }
+  if (lower.includes("link") || lower.includes("mismatch")) return "Link mismatch";
+  return flag.slice(0, 28);
+}
+
+function extractFlagPhrases(flags: string[]): string[] {
+  const phrases: string[] = [];
+  for (const flag of flags) {
+    const quoted = flag.match(/'([^']+)'/g);
+    if (quoted) {
+      for (const q of quoted) {
+        const inner = q.slice(1, -1).replace(/\\d\+/g, "2").replace(/\?/g, "");
+        if (inner.length >= 2 && !inner.startsWith("http")) {
+          phrases.push(inner);
+        }
+      }
+    }
+    const lower = flag.toLowerCase();
+    if (lower.includes("urgent")) phrases.push("act within 2 hours", "urgent");
+    if (lower.includes("credential") || lower.includes("id")) {
+      phrases.push("national ID scan", "registration fee");
+    }
+  }
+  return Array.from(new Set(phrases));
+}
+
+function extractMismatchUrls(flags: string[]): { visible: string; actual: string } | null {
+  for (const flag of flags) {
+    const m = /Visible '([^']+)' -> Real '([^']+)'/i.exec(flag);
+    if (m) return { visible: m[1], actual: m[2] };
+  }
+  return null;
+}
+
+function highlightText(text: string, phrases: string[]): ReactNode {
+  if (!phrases.length) return text;
+  const escaped = phrases
+    .filter((p) => p.length >= 2)
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!escaped.length) return text;
+  const re = new RegExp(`(${escaped.join("|")})`, "gi");
+  const parts = text.split(re);
+  return parts.map((part, idx) =>
+    idx % 2 === 1 ? (
+      <mark key={idx} className="flag-hl">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
 export function InboxDemoPanel({
   csrf,
+  quarantineCount = 0,
   onIngested,
 }: {
   csrf: string;
+  quarantineCount?: number;
   onIngested: () => Promise<void> | void;
 }) {
   const [sender, setSender] = useState(FISHY_PRESET.sender);
   const [subject, setSubject] = useState(FISHY_PRESET.subject);
   const [body, setBody] = useState(FISHY_PRESET.body);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [err, setErr] = useState("");
+  const [announcement, setAnnouncement] = useState("");
   const [result, setResult] = useState<{
     scan: ScanResult;
     quarantined: boolean;
@@ -37,6 +108,7 @@ export function InboxDemoPanel({
   } | null>(null);
 
   async function speakSummary(text: string) {
+    setSpeaking(true);
     try {
       const r = await fetch("/api/voice/speak", {
         method: "POST",
@@ -51,25 +123,42 @@ export function InboxDemoPanel({
         const blob = await r.blob();
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
-        audio.addEventListener("ended", () => URL.revokeObjectURL(url));
-        await audio.play();
+        await new Promise<void>((resolve) => {
+          audio.addEventListener("ended", () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          });
+          audio.addEventListener("error", () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          });
+          audio.play().catch(() => resolve());
+        });
+        setSpeaking(false);
         return;
       }
     } catch {
-      // Fallback to browser Web Speech API below
+      // Fallback to browser Web Speech API
     }
 
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 1.0;
-    window.speechSynthesis.speak(utter);
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.rate = 1.0;
+      utter.onend = () => setSpeaking(false);
+      utter.onerror = () => setSpeaking(false);
+      window.speechSynthesis.speak(utter);
+      setTimeout(() => setSpeaking(false), 4500);
+      return;
+    }
+    setSpeaking(false);
   }
 
   async function handleIngest(e: React.FormEvent) {
     e.preventDefault();
     if (busy) return;
     setBusy(true);
+    setScanning(true);
     setErr("");
     try {
       const r = await fetch("/api/inbox/ingest", {
@@ -92,29 +181,59 @@ export function InboxDemoPanel({
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         setErr(j.detail || "Failed to ingest email");
+        setScanning(false);
         return;
       }
+
+      if (!prefersReducedMotion()) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      setScanning(false);
       setResult(j);
+
+      if (j.quarantined && !prefersReducedMotion()) {
+        document.body.classList.add("jolt-small");
+        setTimeout(() => document.body.classList.remove("jolt-small"), 180);
+      }
+
+      setAnnouncement(
+        j.quarantined
+          ? `Scan complete: ${j.scan?.risk_level}. Quarantined as ${j.quarantine_id}.`
+          : `Scan complete: ${j.scan?.risk_level}.`
+      );
+
       if (j.scan?.spoken_summary) {
-        speakSummary(j.scan.spoken_summary);
+        void speakSummary(j.scan.spoken_summary);
       }
       await onIngested();
     } finally {
       setBusy(false);
+      setScanning(false);
     }
   }
 
+  const activeFlags = result?.scan.flags ?? [];
+  const phrases = highlightPhrasesFor(result?.scan);
+  const mismatch = extractMismatchUrls(activeFlags);
+  const riskPct =
+    result?.scan.risk_level === "LIKELY_SCAM"
+      ? 95
+      : result?.scan.risk_level === "SUSPICIOUS"
+      ? 55
+      : 15;
+  const riskColor =
+    result?.scan.risk_level === "LIKELY_SCAM"
+      ? "var(--red)"
+      : result?.scan.risk_level === "SUSPICIOUS"
+      ? "var(--canary)"
+      : "var(--blue)";
+
   return (
-    <section
-      aria-label="Email Scam & Voice Summary Demo"
-      style={{
-        margin: "18px clamp(16px, 4vw, 48px)",
-        padding: "16px 20px",
-        background: "var(--paper)",
-        border: "2px solid var(--ink)",
-        boxShadow: "5px 5px 0 var(--ink)",
-      }}
-    >
+    <section className="desk-panel" aria-label="Email Scam & Voice Summary Demo">
+      <div className="sr-only" aria-live="polite">
+        {announcement}
+      </div>
+
       <div
         style={{
           display: "flex",
@@ -127,10 +246,10 @@ export function InboxDemoPanel({
       >
         <div>
           <h2 style={{ fontSize: 18, textTransform: "uppercase" }}>
-            Inbox Scam &amp; Voice Summary Demo
+            Inbox Scan &amp; Voice Summary Demo
           </h2>
-          <p style={{ fontFamily: "var(--type)", fontSize: 12, color: "var(--soft)" }}>
-            Ingest a fishy email to scan it, auto-quarantine LOW-trust threats, and hear the voice summary.
+          <p className="panel-sub">
+            Inspect a letter in plain text, run the X-ray scam scan, and quarantine LOW-trust threats.
           </p>
         </div>
         <button
@@ -140,13 +259,15 @@ export function InboxDemoPanel({
             setSender(FISHY_PRESET.sender);
             setSubject(FISHY_PRESET.subject);
             setBody(FISHY_PRESET.body);
+            setResult(null);
+            setErr("");
           }}
         >
           Load fishy email
         </button>
       </div>
 
-      <form onSubmit={handleIngest} style={{ display: "grid", gap: 8 }}>
+      <form onSubmit={handleIngest} style={{ display: "grid", gap: 8, marginBottom: 14 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <input
             type="text"
@@ -155,10 +276,12 @@ export function InboxDemoPanel({
             placeholder="Sender email"
             aria-label="Ingest sender email"
             style={{
+              minHeight: 44,
               border: "2px solid var(--ink)",
               padding: "6px 10px",
               fontFamily: "var(--type)",
               background: "var(--paper)",
+              color: "var(--ink)",
             }}
           />
           <input
@@ -168,10 +291,12 @@ export function InboxDemoPanel({
             placeholder="Subject"
             aria-label="Ingest subject"
             style={{
+              minHeight: 44,
               border: "2px solid var(--ink)",
               padding: "6px 10px",
               fontFamily: "var(--type)",
               background: "var(--paper)",
+              color: "var(--ink)",
             }}
           />
         </div>
@@ -182,68 +307,137 @@ export function InboxDemoPanel({
           placeholder="Email body"
           aria-label="Ingest body"
           style={{
+            minHeight: 44,
             border: "2px solid var(--ink)",
             padding: "6px 10px",
             fontFamily: "var(--type)",
             background: "var(--paper)",
+            color: "var(--ink)",
             resize: "vertical",
           }}
         />
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button type="submit" className="btn-desk primary" disabled={busy}>
-            Scan &amp; Ingest Email
+            {busy ? "Scanning..." : "Scan & Ingest Email"}
           </button>
           {err && (
-            <span style={{ color: "var(--red)", fontFamily: "var(--type)", fontSize: 13 }}>
+            <span role="alert" style={{ color: "var(--red)", fontFamily: "var(--type)", fontSize: 13, fontWeight: 700 }}>
               {err}
             </span>
           )}
         </div>
       </form>
 
-      {result && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: "12px 14px",
-            border: "2px solid var(--ink)",
-            background: result.scan.risk_level === "SAFE" ? "var(--tape)" : "var(--canary)",
-            fontFamily: "var(--type)",
-            fontSize: 13,
-            display: "grid",
-            gap: 6,
-          }}
+      <div className="inbox-grid">
+        <article
+          className={`letter-box ${result?.quarantined ? "slide-quar" : ""}`}
+          aria-label="Scanned email letter"
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span>
-              <span
-                className={`chip ${result.scan.risk_level === "SAFE" ? "" : "bad"}`}
-                style={{ padding: "2px 8px", marginRight: 8 }}
-              >
-                {result.scan.risk_level}
-              </span>
-              {result.quarantined && (
-                <strong>Quarantined as {result.quarantine_id}</strong>
-              )}
-            </span>
-            <button
-              type="button"
-              className="btn-desk"
-              onClick={() => speakSummary(result.scan.spoken_summary)}
-            >
-              Play voice summary
-            </button>
+          {scanning && <div className="xray-bar" aria-hidden="true" />}
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <strong>LETTER PREVIEW</strong>
+            {result?.quarantined && <span className="quar-stamp">QUARANTINED</span>}
+          </div>
+
+          <div>
+            <strong>From:</strong> {highlightText(sender, phrases)}
           </div>
           <div>
-            <strong>Voice summary:</strong> {result.scan.spoken_summary}
+            <strong>Subject:</strong> {highlightText(subject, phrases)}
           </div>
-          {result.scan.flags.length > 0 && (
-            <div>
-              <strong>Flags:</strong> {result.scan.flags.join(" · ")}
+          <p style={{ marginTop: 8, lineHeight: 1.5 }}>{highlightText(body, phrases)}</p>
+
+          {mismatch && (
+            <div className="mismatch-box" aria-label="Link mismatch">
+              <div>
+                <strong>Says:</strong> {mismatch.visible}
+              </div>
+              <div className="mismatch-line" aria-hidden="true" />
+              <div>
+                <strong>Goes to:</strong> {mismatch.actual}
+              </div>
             </div>
           )}
-        </div>
-      )}
+
+          {result && (
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700 }}>
+                  <span>RISK METER</span>
+                  <span>{result.scan.risk_level}</span>
+                </div>
+                <div className="risk-meter" role="progressbar" aria-valuenow={riskPct} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="risk-fill" style={{ width: `${riskPct}%`, background: riskColor }} />
+                </div>
+              </div>
+
+              {activeFlags.length > 0 && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} aria-label="Findings">
+                  {activeFlags.map((f, idx) => (
+                    <span key={idx} className="chip-stamp" title={f}>
+                      {flagToChipLabel(f)}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div
+                style={{
+                  borderTop: "1.5px solid var(--ink)",
+                  paddingTop: 10,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <strong>Voice summary:</strong> &ldquo;{result.scan.spoken_summary}&rdquo;
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {speaking && (
+                    <div className="sound-bars anim" aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                      <i />
+                      <i />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-desk"
+                    onClick={() => void speakSummary(result.scan.spoken_summary)}
+                  >
+                    Play voice summary
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <aside className="quar-tin" aria-label="Quarantine tin">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <strong>QUARANTINE TIN</strong>
+            <span className="chip bad" style={{ padding: "2px 8px" }}>
+              {quarantineCount}
+            </span>
+          </div>
+          <p style={{ fontSize: 12.5, lineHeight: 1.4 }}>
+            {result?.quarantined
+              ? `Held ${result.quarantine_id} (${result.scan.risk_level}).`
+              : "Suspicious & scam letters drop here after scan."}
+          </p>
+        </aside>
+      </div>
     </section>
   );
+}
+
+function highlightPhrasesFor(scan?: ScanResult): string[] {
+  if (!scan?.flags?.length) return [];
+  return extractFlagPhrases(scan.flags);
 }
