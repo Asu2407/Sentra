@@ -179,14 +179,26 @@ export function requireApproverAndCsrf(secret: string) {
   };
 }
 
-export function requireMcpBearer(expectedToken: string) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+export function requireMcpBearer(
+  expectedToken: string,
+  verifyDynamicKey?: (rawKey: string) => Promise<boolean>
+) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const authHeader = req.get("authorization") ?? "";
     const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
-    if (!match || !timingSafeEqualStrings(match[1], expectedToken)) {
+    if (!match) {
       res.status(401).end();
       return;
     }
-    next();
+    const candidate = match[1];
+    if (timingSafeEqualStrings(candidate, expectedToken)) {
+      next();
+      return;
+    }
+    if (verifyDynamicKey && (await verifyDynamicKey(candidate))) {
+      next();
+      return;
+    }
+    res.status(401).end();
   };
 }

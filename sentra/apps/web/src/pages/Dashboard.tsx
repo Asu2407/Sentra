@@ -6,6 +6,7 @@ import { Tray } from "../components/Tray.tsx";
 import { SlipForm } from "../components/SlipForm.tsx";
 import { GatePanel } from "../components/GatePanel.tsx";
 import { PunchCard } from "../components/PunchCard.tsx";
+import { ApiKeysPanel } from "../components/ApiKeysPanel.tsx";
 import type {
   AuditEntryView,
   ExecutionView,
@@ -287,6 +288,8 @@ export function Dashboard() {
       </main>
 
       {benchmark && <PunchCard blocked={benchmark.blocked} total={benchmark.total} />}
+
+      {csrf && <ApiKeysPanel csrf={csrf} />}
 
       <footer className="site-foot">
         <span>Sentra Gateway &middot; Out-of-band countersignature desk</span>

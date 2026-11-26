@@ -10,6 +10,7 @@ import {
   AuditLedger,
   connect,
   disconnect,
+  getApiKeyModel,
   getAuditEntryModel,
   getConsumedKeyModel,
   getExecutionRecordModel,
@@ -72,6 +73,7 @@ describe("Sentra Express API + Auth + E2E", () => {
       getSourceModel().deleteMany({}),
       getProposalModel().deleteMany({}),
       getConsumedKeyModel().deleteMany({}),
+      getApiKeyModel().deleteMany({}),
       getAuditEntryModel().deleteMany({}),
       getQuarantineItemModel().deleteMany({}),
       getExecutionRecordModel().deleteMany({}),
@@ -523,5 +525,65 @@ describe("Sentra Express API + Auth + E2E", () => {
     expect(JSON.stringify(oauthStatus.body)).not.toContain(plainRefresh);
 
     await getOAuthTokenModel().deleteMany({});
+  });
+
+  it("creates hashed per-agent API keys, authenticates /mcp, and revokes cleanly", async () => {
+    const { app } = await createApp({ authConfig });
+    const agent = request.agent(app);
+
+    const unauthList = await request(app).get("/api/keys");
+    expect(unauthList.status).toBe(401);
+
+    const loginRes = await agent.post("/api/login").send({ password });
+    expect(loginRes.status).toBe(200);
+    const csrf = loginRes.body.csrf as string;
+
+    const createRes = await agent
+      .post("/api/keys")
+      .set("X-Sentra-CSRF", csrf)
+      .send({ name: "Cursor Agent" });
+    expect(createRes.status).toBe(201);
+    const rawKey = createRes.body.key as string;
+    const keyId = createRes.body.record.id as string;
+    expect(rawKey.startsWith("sentra_live_")).toBe(true);
+
+    // Raw MongoDB collection stores only SHA-256 key_hash, never rawKey
+    const mongoose = (await import("mongoose")).default;
+    const rawDoc = await mongoose.connection.db!
+      .collection("api_keys")
+      .findOne({ _id: keyId as unknown as never });
+    expect(rawDoc).not.toBeNull();
+    expect(JSON.stringify(rawDoc)).not.toContain(rawKey);
+    expect(typeof rawDoc!.key_hash).toBe("string");
+
+    // GET /api/keys never returns key_hash or rawKey
+    const listRes = await agent.get("/api/keys");
+    expect(listRes.status).toBe(200);
+    expect(JSON.stringify(listRes.body)).not.toContain(rawKey);
+    expect(JSON.stringify(listRes.body)).not.toContain(rawDoc!.key_hash);
+
+    // /mcp accepts the per-agent key
+    const mcpBody = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+    const mcpOk = await request(app)
+      .post("/mcp")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .set("Accept", "application/json, text/event-stream")
+      .send(mcpBody);
+    expect(mcpOk.status).toBe(200);
+    expect(mcpOk.text).toContain("propose_action");
+
+    // Revoke key -> /mcp immediately rejects with 401
+    const revokeRes = await agent
+      .delete(`/api/keys/${keyId}`)
+      .set("X-Sentra-CSRF", csrf);
+    expect(revokeRes.status).toBe(200);
+    expect(revokeRes.body.ok).toBe(true);
+
+    const mcpRevoked = await request(app)
+      .post("/mcp")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .set("Accept", "application/json, text/event-stream")
+      .send(mcpBody);
+    expect(mcpRevoked.status).toBe(401);
   });
 });

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import mongoose, { type Connection } from "mongoose";
 import { ENV_MONGODB_URI } from "./constants.js";
+import { getApiKeyModel } from "./models/ApiKey.js";
 import { getAuditEntryModel } from "./models/AuditEntry.js";
 import { getConsumedKeyModel } from "./models/ConsumedKey.js";
 import { getExecutionRecordModel } from "./models/ExecutionRecord.js";
@@ -16,6 +17,7 @@ const globalForMongo = globalThis as unknown as {
 export async function syncAllIndexes(conn: Connection = mongoose.connection): Promise<void> {
   try {
     await Promise.all([
+      getApiKeyModel(conn).init(),
       getSourceModel(conn).init(),
       getProposalModel(conn).init(),
       getConsumedKeyModel(conn).init(),

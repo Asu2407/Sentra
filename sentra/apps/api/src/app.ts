@@ -13,6 +13,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { registerSentraTools } from "@sentra/mcp";
 import {
+  ApiKeyStore,
   AuditLedger,
   CompositeExecutionAdapter,
   OOBExecutionGate,
@@ -163,6 +164,7 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
   const authConfig = options?.authConfig ?? loadAuthConfig();
   const taintTracker = new TaintTracker();
   const auditLedger = new AuditLedger();
+  const apiKeyStore = new ApiKeyStore(mongoose.connection);
   const oobGate = new OOBExecutionGate({ taintTracker, auditLedger });
   const tokenEncryptionKey =
     authConfig.tokenEncryptionKey ??
@@ -920,7 +922,7 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
     "/mcp",
     mcpLimiter,
     checkMcpHostAndOrigin,
-    requireMcpBearer(mcpToken),
+    requireMcpBearer(mcpToken, async (rawKey) => Boolean(await apiKeyStore.verifyKey(rawKey))),
     async (req: Request, res: Response, next: NextFunction) => {
     try {
       const mcpServer = new McpServer(
@@ -941,6 +943,78 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
       next(err);
     }
   });
+
+  // Per-agent / per-user API key management (hashed at rest, shown once on creation)
+  const createKeyBodySchema = z.object({
+    name: z.string().trim().min(1).max(60),
+  });
+  const kidParamSchema = z.object({
+    kid: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/),
+  });
+
+  app.get("/api/keys", requireSession, async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const keys = await apiKeyStore.listKeys();
+      res.json({ keys });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post(
+    "/api/keys",
+    actionLimiter,
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const parsed = createKeyBodySchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ detail: "API key name is required (1-60 chars)" });
+          return;
+        }
+        const created = await apiKeyStore.createKey(
+          parsed.data.name,
+          req.approverSession?.sub ?? APPROVER_USER_ID
+        );
+        const actor = req.approverSession?.sub ?? APPROVER_USER_ID;
+        const audit = await auditLedger.append(
+          actor,
+          `created API key ${created.record.id} (${created.record.name})`
+        );
+        res.status(201).json({ ...created, audit });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.delete(
+    "/api/keys/:kid",
+    actionLimiter,
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const parsed = kidParamSchema.safeParse(req.params);
+        if (!parsed.success) {
+          res.status(400).json({ detail: "Invalid API key id" });
+          return;
+        }
+        const revoked = await apiKeyStore.revokeKey(parsed.data.kid);
+        if (!revoked) {
+          res.status(404).json({ detail: "API key not found or already revoked" });
+          return;
+        }
+        const actor = req.approverSession?.sub ?? APPROVER_USER_ID;
+        const audit = await auditLedger.append(
+          actor,
+          `revoked API key ${revoked.id} (${revoked.name})`
+        );
+        res.json({ ok: true, record: revoked, audit });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
 
   // Health check (checks Mongo connection, no sensitive data)
   app.get("/healthz", async (_req, res) => {
