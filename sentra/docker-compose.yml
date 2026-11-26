@@ -1,0 +1,34 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - sentra_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sentra:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+    environment:
+      NODE_ENV: production
+      PORT: "8001"
+      MONGODB_URI: mongodb://mongo:27017/sentra
+      SENTRA_UI_URL: http://127.0.0.1:8001
+      SENTRA_APPROVER_PASSWORD: ${SENTRA_APPROVER_PASSWORD:?Set SENTRA_APPROVER_PASSWORD (12+ chars)}
+      SENTRA_SESSION_SECRET: ${SENTRA_SESSION_SECRET:?Set SENTRA_SESSION_SECRET (32+ chars)}
+
+volumes:
+  sentra_mongo_data:

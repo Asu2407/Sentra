@@ -3,9 +3,9 @@
 
 [![MCP Standard](https://img.shields.io/badge/MCP-1.0-blue.svg)](https://modelcontextprotocol.io/)
 [![Security](https://img.shields.io/badge/OWASP-LLM01%20%7C%20LLM06-red.svg)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Python](https://img.shields.io/badge/Python-3.11+-brightgreen.svg)](https://python.org)
-[![FastMCP](https://img.shields.io/badge/FastMCP-SDK-orange.svg)](https://github.com/jlowin/fastmcp)
-[![FastAPI](https://img.shields.io/badge/Console-FastAPI-teal.svg)](https://fastapi.tiangolo.com/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
+[![MERN](https://img.shields.io/badge/Stack-MongoDB%20%7C%20Express%20%7C%20React%20%7C%20Node-green.svg)](./sentra/README.md)
+[![MCP SDK](https://img.shields.io/badge/MCP-TypeScript%20SDK-orange.svg)](https://github.com/modelcontextprotocol/typescript-sdk)
 
 > **Track**: *Make MCP Matter, Less Magic, More Utility*  
 > **Core Slogan**: *"The TLS Layer for Autonomous AI: Verifying Origin, Proving Constraints, and Enforcing Cryptographic Consent."*
@@ -107,15 +107,14 @@ Any manual alteration of history invalidates subsequent hashes, ensuring transpa
 
 | Primitive | Name | Description |
 | :--- | :--- | :--- |
-| **Resource** | `disha://schedule/today` | Subscribable resource emitting updates whenever constraints or events change state. |
-| **Resource** | `disha://briefing/daily` | Formatted daily digest of confirmed commitments and time buffers for spoken voice playback. |
-| **Prompt** | `/prepare-tomorrow` | Slash command guiding the LLM to inspect constraints, run arithmetic checks, and propose ranked replans. |
-| **Prompt** | `/triage-inbox` | Slash command scanning inbox for scams and halting untrusted outbound transmission attempts. |
-| **Tool** | `scan_email` | Heuristic fake-detection tool checking lookalike domains, credential traps, and urgency cues. |
-| **Tool** | `propose_send_email` | Intercepts outbound email sending triggered by untrusted sources and generates approval card. |
+| **Resource** | `sentra://schedule/today` | Subscribable resource emitting current schedule collisions and budget breaches. |
+| **Resource** | `sentra://briefing/daily` | Formatted daily digest of confirmed commitments and time buffers. |
+| **Resource** | `sentra://guide/beginner` | Step-by-step beginner guideline for opening and using Sentra MCP. |
+| **Tool** | `scan_suspicious_email` | Heuristic fake-detection tool checking lookalike domains, credential traps, and urgency cues. |
+| **Tool** | `propose_send_email` | Intercepts outbound email sending triggered by untrusted sources and stages an approval slip. |
 | **Tool** | `detect_conflicts` | Runs deterministic constraint solvers across transit buffers, medication windows, and fee-inclusive caps. |
 | **Tool** | `generate_replan_options` | Computes feasible alternatives ranked by priority weights (Hard constraints > Flexible study blocks). |
-| **Tool** | `propose_action` | **Stage-only tool.** Creates a pending proposal record with a 5-minute TTL. Returns deep link for human review. |
+| **Tool** | `propose_action` | **Stage-only tool.** Creates a pending proposal record with a 300s TTL. Returns deep link for human review. |
 
 ---
 
@@ -123,53 +122,48 @@ Any manual alteration of history invalidates subsequent hashes, ensuring transpa
 
 ```
 Sentra/
-├── README.md                      # Master architecture & project documentation
+├── README.md                      # Master project overview & quickstart
 ├── ARCHITECTURE.md                # Formal security specifications & sequence diagrams
 ├── PITCH_DECK.md                  # 8-Slide wHACKiest 2026 pitch deck & judge delivery script
-├── requirements.txt               # Production Python dependencies
-├── .gitignore                     # Clean environment & cache ignore rules
-├── fixtures/
-│   └── sample_demo_data.json      # Test fixtures (train ticket, prescription, malicious PDF)
-├── src/
-│   ├── server.py                  # Main FastMCP Gateway server
-│   ├── gateway/
-│   │   ├── taint_tracker.py       # Data provenance & origin trust engine
-│   │   ├── email_guard.py         # Outbound email interceptor & approval gate
-│   │   └── oob_gate.py            # Out-of-band HMAC-SHA256 signer & TTL manager
-│   ├── engine/
-│   │   ├── conflict_detector.py   # Deterministic interval math & budget solver
-│   │   └── scam_detector.py       # Smart inbox fake-detection & phishing scanner
-│   └── ui/
-│       └── app.py                 # FastAPI console with Web Speech audio, email cards & undo
-└── tests/
-    └── test_sentra.py             # Automated test suite (6/6 tests passing)
+├── .github/workflows/ci.yml       # Build, Vitest, and Playwright headless E2E CI
+└── sentra/                        # MERN + TypeScript monorepo (npm workspaces)
+    ├── packages/core/             # Security logic, Mongoose models, adapters, 25-case benchmark
+    ├── apps/api/                  # Express API (auth, CSRF, rate-limit, CSP, /healthz)
+    ├── apps/mcp/                  # Stdio MCP server sharing MongoDB with apps/api
+    ├── apps/web/                  # React + Vite UI (Home, /dashboard, /control-room)
+    ├── e2e/                       # Playwright smoke test & screenshot capture
+    ├── Dockerfile & render.yaml   # Container & Render production deployment
+    └── README.md                  # Detailed MERN setup, env vars, and curl transcript
 ```
 
 ---
 
 ## 🚀 Quickstart Guide
 
-### 1. Installation
+### 1. Installation & Build
 ```bash
-git clone https://github.com/Asu2407/Sentra.git
-cd Sentra
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+cd sentra
+cp .env.example .env
+npm install
+npm run build
 ```
 
 ### 2. Run Automated Verification Tests
 ```bash
-python -m pytest tests/test_sentra.py -v
+npm test
+npx playwright test
 ```
-*(All 6 unit tests verify taint tracking, collision math, HMAC tokens, scam detection, and email approval)*
+*(Verifies `@sentra/core`, `@sentra/api`, `@sentra/mcp`, `@sentra/web`, and headless Chromium E2E)*
 
 ### 3. Run the System
 ```bash
-# Terminal 1: Launch FastAPI Out-of-Band Approval Console
-python -m uvicorn src.ui.app:app --host 127.0.0.1 --port 8000 --reload
+# Terminal 1: Launch Express Approval Console API (port 8001)
+npm run dev:api
 
-# Terminal 2: Launch Sentra FastMCP Gateway Server
-python -m src.server
+# Terminal 2: Launch React + Vite UI (port 5173, proxies /api to 8001)
+npm run dev:web
+
+# Terminal 3: Launch Sentra Stdio MCP Server
+npm run mcp
 ```
-Visit `http://127.0.0.1:8000/` to test both the Schedule Replan Card and the Outbound Email Scam Intercept Card with live Web Speech alerts and Undo buttons!
+Visit `http://127.0.0.1:5173/` (or `http://127.0.0.1:8001/` in production build) to read the beginner guideline, inspect staged proposals, countersign Approve/Deny, verify the SHA-256 audit chain, restore quarantined items, and view the Calendar & Mail outbox + 25-case benchmark punch card.

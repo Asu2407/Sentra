@@ -1,0 +1,20 @@
+{
+  "name": "@sentra/mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "sentra-mcp": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node ./dist/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "@sentra/core": "*",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
+  }
+}

@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: sentra-gateway
+    runtime: node
+    plan: free
+    rootDir: sentra
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "8001"
+      - key: MONGODB_URI
+        sync: false
+      - key: SENTRA_UI_URL
+        sync: false
+      - key: SENTRA_APPROVER_PASSWORD
+        sync: false
+      - key: SENTRA_SESSION_SECRET
+        sync: false
+      - key: SENTRA_MCP_TOKEN
+        sync: false
+      - key: SENTRA_TOKEN_KEY
+        sync: false
+      - key: SENTRA_ENABLE_LIVE_EXECUTION
+        value: "false"

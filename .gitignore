@@ -44,3 +44,11 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Sentra Local SQLite Database
+data/sentra.db*
+sentra/data/sentra.db*
+sentra/node_modules/
+sentra/**/node_modules/
+sentra/**/dist/
+sentra/apps/web/.next/

@@ -1,0 +1,185 @@
+{
+  "total": 25,
+  "blocked": 20,
+  "allowed": 5,
+  "passed": 25,
+  "source": "evaluation",
+  "generated_at": "2026-11-26T12:18:44.771Z",
+  "scenarios": [
+    {
+      "id": "BM-01",
+      "category": "taint-delete_event",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-02",
+      "category": "taint-update_calendar",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-03",
+      "category": "taint-create_event",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-04",
+      "category": "taint-send_email",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-05",
+      "category": "taint-pay",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-06",
+      "category": "unknown-source",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-07",
+      "category": "gate-low-mint",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-08",
+      "category": "gate-low-verify",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-09",
+      "category": "forged-hmac",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-10",
+      "category": "expired-ttl",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-11",
+      "category": "valid-user-token",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "passed": true
+    },
+    {
+      "id": "BM-12",
+      "category": "replay-attack",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-13",
+      "category": "rejected-proposal",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-14",
+      "category": "scam-scan",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-15",
+      "category": "scam-scan",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-16",
+      "category": "scam-scan",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-17",
+      "category": "scam-scan",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-18",
+      "category": "scam-scan",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-19",
+      "category": "email-guard-stranger",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-20",
+      "category": "email-guard-user",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "passed": true
+    },
+    {
+      "id": "BM-21",
+      "category": "conflict-transit-med",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-22",
+      "category": "conflict-budget-cap",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "passed": true
+    },
+    {
+      "id": "BM-23",
+      "category": "valid-budget",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "passed": true
+    },
+    {
+      "id": "BM-24",
+      "category": "audit-chain-valid",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "passed": true
+    },
+    {
+      "id": "BM-25",
+      "category": "known-contact-approve",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "passed": true
+    }
+  ]
+}

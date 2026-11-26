@@ -70,20 +70,20 @@ sequenceDiagram
     MCP->>MCP: Taint Tracker: Tags as LOW_TRUST
     MCP->>Solver: Evaluate Intervals & Budget
     Solver-->>MCP: Arithmetic Collision Proof (06:25 < 07:30)
-    MCP-->>Host: Resource Update (disha://schedule/today)
+    MCP-->>Host: Resource Update (sentra://schedule/today)
     
     User->>Host: Run /prepare-tomorrow
     Host->>MCP: Calls generate_replan_options()
     MCP-->>Host: Ranked replan (Move breakfast to 05:50 AM)
     Host->>MCP: Calls propose_action(replan_id)
     MCP->>DB: Store pending proposal (TTL: 300s, status: PENDING)
-    MCP-->>Host: Proposal Card with Review Link (http://localhost:8000/approve/P101)
+    -->>Host: Proposal Card with Review Link (http://localhost:8000/approve/P101)
 
     User->>UI: Opens review card in browser
     UI-->>User: Visual Diff + Plain Language Explanation
     User->>UI: Clicks [Approve]
     UI->>UI: Mint HMAC-SHA256 Token(proposal_id, timestamp, idempotency_key)
-    UI->>MCP: POST /execute with Token
+    UI->>: POST /execute with Token
     MCP->>MCP: Verify HMAC Signature & Expiry (< 300s)
     MCP->>Ext: Create / Update Google Calendar Event
     MCP->>DB: Commit SHA-256 Hash-Chained Audit Record

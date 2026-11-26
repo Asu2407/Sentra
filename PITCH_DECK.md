@@ -42,7 +42,7 @@
 ---
 
 ### Slide 4: Tech Stack
-* **Agent Protocol Standard**: **FastMCP Python SDK (MCP 1.0)** — Native Subscribable Resources (`disha://schedule/today`) and slash Prompts (`/prepare-tomorrow`, `/triage-inbox`).
+* **Agent Protocol Standard**: **MCP TypeScript SDK (MCP 1.0)** — Native Resources (`sentra://schedule/today`) and Prompts (`prepare-tomorrow`, `triage-inbox`).
 * **Deterministic Solvers & Scam Heuristics**: **Python 3.11+ & Pydantic v2** — Interval math, regex phishing signals, and typed schema validation.  
   *(Note: Safety checks use 100% deterministic Python—no hallucinating AI model is evaluating another AI model).*
 * **Security & Cryptography**: **Python `hmac` & `hashlib` (SHA-256)** — Single-use 5-minute TTL tokens and tamper-evident append-only audit hash chains.

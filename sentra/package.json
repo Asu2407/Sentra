@@ -1,0 +1,32 @@
+{
+  "name": "sentra-mern",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "benchmark": "tsx packages/core/scripts/run-benchmark.ts",
+    "dev:api": "tsx watch apps/api/src/server.ts",
+    "dev:web": "npm --workspace=@sentra/web run dev",
+    "mcp": "tsx apps/mcp/src/server.ts",
+    "build": "npm --workspace=@sentra/core run build && npm --workspace=@sentra/mcp run build && npm --workspace=@sentra/api run build && npm --workspace=@sentra/web run build",
+    "start": "node apps/api/dist/server.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/node": "^22.10.0",
+    "@types/supertest": "^7.2.1",
+    "jsdom": "^31.0.1",
+    "mongodb-memory-server": "^10.1.2",
+    "supertest": "^7.3.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
