@@ -236,7 +236,6 @@ export function Dashboard() {
 
   return (
     <>
-      <ChaosField state={chaosState} />
       <Nav active="dashboard" />
       <AuthBar
         authenticated={!!csrf}
@@ -252,6 +251,7 @@ export function Dashboard() {
           setAuthUser(null);
         }}
       />
+      <ChaosField state={chaosState} onStateChange={setChaosState} />
       <section className="intro">
         <h1>Approval console</h1>
         <p>

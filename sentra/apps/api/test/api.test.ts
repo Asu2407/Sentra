@@ -640,5 +640,15 @@ describe("Sentra Express API + Auth + E2E", () => {
       .set("X-Sentra-CSRF", csrf)
       .send({ prompt: "Check conflicts" });
     expect(noKeyAgent.status).toBe(503);
+
+    // /api/inbox/summarize categorizes emails into SAFE, SUSPICIOUS, LIKELY_SCAM
+    const sumRes = await agent
+      .post("/api/inbox/summarize")
+      .set("X-Sentra-CSRF", csrf);
+    expect(sumRes.status).toBe(200);
+    expect(sumRes.body.total).toBe(3);
+    expect(sumRes.body.safe_count).toBe(1);
+    expect(sumRes.body.suspicious_count).toBe(1);
+    expect(sumRes.body.scam_count).toBe(1);
   });
 });

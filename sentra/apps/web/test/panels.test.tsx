@@ -158,7 +158,7 @@ describe("VoiceAgentPanel & InboxDemoPanel", () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Scan & Ingest Email" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load fishy email" }));
 
     await waitFor(() => expect(screen.getByText("QUARANTINED")).toBeInTheDocument());
 

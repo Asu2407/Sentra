@@ -1080,6 +1080,45 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
     }
   );
 
+  // Categorize & quarantine inbox batch (SAFE / SUSPICIOUS / LIKELY_SCAM)
+  app.post(
+    "/api/inbox/summarize",
+    actionLimiter,
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const summary = scamDetector.summarizeInbox();
+        const quarantinedIds: string[] = [];
+        const actor = req.approverSession?.sub ?? APPROVER_USER_ID;
+
+        for (const item of summary.items) {
+          if (item.risk_level === "LIKELY_SCAM") {
+            if (!(await QuarantineItem.findById(item.id).lean())) {
+              await taintTracker.registerSource(`SRC_${item.id}`, "email", "LOW", item.sender);
+              await QuarantineItem.create({
+                _id: item.id,
+                id: item.id,
+                title: item.subject,
+                reason: item.flags.slice(0, 2).join("; ") || item.plain_warning,
+                status: "QUARANTINED",
+              });
+              await auditLedger.append(
+                actor,
+                `quarantined ${item.id} (${item.sender}): ${item.risk_level}`,
+                true
+              );
+            }
+            quarantinedIds.push(item.id);
+          }
+        }
+
+        res.json({ ...summary, quarantined_ids: quarantinedIds });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   // Humanized voice summary via ElevenLabs (requires session + CSRF, never exposes API key)
   const speakBodySchema = z.object({
     text: z.string().trim().min(1).max(1000),

@@ -380,35 +380,111 @@ a { color: inherit; }
   min-height: 44px;
 }
 
-/* ChaosField background */
-.chaos-field {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  overflow: hidden;
+/* Sentra 3D Orbit Hero (ChaosField) */
+.orbit-wrap {
+  position: relative;
+  margin: 6px clamp(16px, 4vw, 48px) 0;
 }
-.chaos-rule {
+.orbit-hero {
+  position: relative;
+  height: min(56vh, 460px);
+  min-height: 360px;
+  overflow: hidden;
+  perspective: 1100px;
+}
+.orbit-mid {
+  position: relative;
+  z-index: 50;
+  height: 100%;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  pointer-events: none;
+  padding: 0 16px;
+}
+.orbit-mid h1 {
+  font: 700 clamp(36px, 6vw, 72px)/1 var(--print);
+  margin: 0;
+}
+.orbit-w {
+  color: var(--blue);
+  background: linear-gradient(transparent 64%, var(--canary) 64%);
+  padding: 0 6px;
+  display: inline-block;
+  animation: orbit-sw 0.45s ease-out;
+}
+@keyframes orbit-sw {
+  from { transform: translateY(14px); opacity: 0; }
+}
+.orbit-sub {
+  margin: 12px auto 0;
+  max-width: 44ch;
+  font-family: var(--type);
+  font-size: 17px;
+  color: var(--ink);
+}
+.orbit-tile {
   position: absolute;
   left: 0;
-  right: 0;
-  height: 2px;
-  background: transparent;
-  transition: background-color 200ms ease, transform 300ms ease;
+  top: 0;
+  width: 88px;
+  height: 88px;
+  margin: -44px 0 0 -44px;
+  border-radius: 22px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-bottom: 8px solid var(--edge, var(--canary));
+  box-shadow: 5px 5px 0 var(--ink);
+  display: grid;
+  place-items: center;
+  will-change: transform;
+  transition: border-color 0.3s, box-shadow 0.3s;
 }
-.chaos-rule.r1 { top: 22%; }
-.chaos-rule.r2 { top: 52%; }
-.chaos-rule.r3 { top: 82%; }
-.chaos-field.chaos-thinking .chaos-rule {
-  background: rgba(30, 63, 174, 0.22);
-  animation: chaos-pulse 1.4s ease-in-out infinite;
+.orbit-tile svg {
+  width: 42px;
+  height: 42px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.chaos-field.chaos-sorted .chaos-rule {
-  background: rgba(27, 34, 48, 0.16);
+.orbit-tile .f { fill: var(--blue); stroke: var(--ink); }
+.orbit-tile .y { fill: var(--canary); }
+.orbit-tile.busy {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 4px rgba(30, 63, 174, 0.25), 5px 5px 0 var(--blue);
 }
-@keyframes chaos-pulse {
-  0%, 100% { transform: translateX(-16px); }
-  50% { transform: translateX(16px); }
+.orbit-tile.bad svg { stroke: var(--red); }
+.orbit-tile.bad {
+  border-color: var(--red);
+  box-shadow: 5px 5px 0 var(--red);
+  --edge: var(--red);
+}
+.orbit-tile .ck {
+  position: absolute;
+  right: -12px;
+  top: -12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--blue);
+  border: 2.5px solid var(--ink);
+  color: #fff;
+  font: 700 15px/22px var(--print);
+  text-align: center;
+  transform: scale(0);
+  transition: transform 0.35s cubic-bezier(0.3, 1.6, 0.4, 1);
+}
+.orbit-tile.ok .ck { transform: scale(1); }
+.orbit-row {
+  position: relative;
+  z-index: 60;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 4px 16px 14px;
 }
 
 /* Voice Assistant & Inbox Scan upgraded panels */
@@ -625,7 +701,7 @@ body.jolt-small { animation: jolt-4px 160ms ease; }
   .va-grid, .inbox-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .xray-bar, .mic-ring, .sound-bars.anim i, .chaos-field.chaos-thinking .chaos-rule {
+  .xray-bar, .mic-ring, .sound-bars.anim i, .orbit-w {
     animation: none !important;
   }
   .quar-stamp { animation: none !important; transform: rotate(-6deg); }

@@ -18,6 +18,17 @@ const FISHY_PRESET = {
   actual_link: "http://internship-secure-portal.xyz/steal",
 };
 
+const SAFE_PRESET = {
+  sender: "boss@company.com",
+  subject: "Tomorrow morning 07:10 train & Q3 sync",
+  body: "Safe travels to Bengaluru. Let's sync at 11:00 after you settle in.",
+};
+
+interface InboxSummaryItem extends ScanResult {
+  id: string;
+  tldr: string;
+}
+
 function prefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -93,14 +104,21 @@ export function InboxDemoPanel({
   quarantineCount?: number;
   onIngested: () => Promise<void> | void;
 }) {
-  const [sender, setSender] = useState(FISHY_PRESET.sender);
-  const [subject, setSubject] = useState(FISHY_PRESET.subject);
-  const [body, setBody] = useState(FISHY_PRESET.body);
+  const [sender, setSender] = useState(SAFE_PRESET.sender);
+  const [subject, setSubject] = useState(SAFE_PRESET.subject);
+  const [body, setBody] = useState(SAFE_PRESET.body);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [err, setErr] = useState("");
   const [announcement, setAnnouncement] = useState("");
+  const [inboxSummary, setInboxSummary] = useState<{
+    digest: string;
+    safe_count: number;
+    suspicious_count: number;
+    scam_count: number;
+    items: InboxSummaryItem[];
+  } | null>(null);
   const [result, setResult] = useState<{
     scan: ScanResult;
     quarantined: boolean;
@@ -154,8 +172,11 @@ export function InboxDemoPanel({
     setSpeaking(false);
   }
 
-  async function handleIngest(e: React.FormEvent) {
-    e.preventDefault();
+  async function runScan(
+    targetSender: string,
+    targetSubject: string,
+    targetBody: string
+  ) {
     if (busy) return;
     setBusy(true);
     setScanning(true);
@@ -169,13 +190,13 @@ export function InboxDemoPanel({
           "X-Sentra-CSRF": csrf,
         },
         body: JSON.stringify({
-          sender,
-          subject,
-          body,
+          sender: targetSender,
+          subject: targetSubject,
+          body: targetBody,
           visible_link:
-            sender === FISHY_PRESET.sender ? FISHY_PRESET.visible_link : undefined,
+            targetSender === FISHY_PRESET.sender ? FISHY_PRESET.visible_link : undefined,
           actual_link:
-            sender === FISHY_PRESET.sender ? FISHY_PRESET.actual_link : undefined,
+            targetSender === FISHY_PRESET.sender ? FISHY_PRESET.actual_link : undefined,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -209,6 +230,37 @@ export function InboxDemoPanel({
     } finally {
       setBusy(false);
       setScanning(false);
+    }
+  }
+
+  async function handleIngest(e: React.FormEvent) {
+    e.preventDefault();
+    await runScan(sender, subject, body);
+  }
+
+  async function handleCategorizeInbox() {
+    if (busy) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await fetch("/api/inbox/summarize", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-Sentra-CSRF": csrf },
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setErr(j.detail || "Failed to categorize inbox");
+        return;
+      }
+      setInboxSummary(j);
+      setAnnouncement(j.digest || "Inbox categorized.");
+      if (j.digest) {
+        void speakSummary(j.digest);
+      }
+      await onIngested();
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -252,19 +304,44 @@ export function InboxDemoPanel({
             Inspect a letter in plain text, run the X-ray scam scan, and quarantine LOW-trust threats.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-desk"
-          onClick={() => {
-            setSender(FISHY_PRESET.sender);
-            setSubject(FISHY_PRESET.subject);
-            setBody(FISHY_PRESET.body);
-            setResult(null);
-            setErr("");
-          }}
-        >
-          Load fishy email
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn-desk"
+            disabled={busy}
+            onClick={() => {
+              setSender(FISHY_PRESET.sender);
+              setSubject(FISHY_PRESET.subject);
+              setBody(FISHY_PRESET.body);
+              setResult(null);
+              void runScan(FISHY_PRESET.sender, FISHY_PRESET.subject, FISHY_PRESET.body);
+            }}
+          >
+            Load fishy email
+          </button>
+          <button
+            type="button"
+            className="btn-desk"
+            disabled={busy}
+            onClick={() => {
+              setSender(SAFE_PRESET.sender);
+              setSubject(SAFE_PRESET.subject);
+              setBody(SAFE_PRESET.body);
+              setResult(null);
+              void runScan(SAFE_PRESET.sender, SAFE_PRESET.subject, SAFE_PRESET.body);
+            }}
+          >
+            Load safe email
+          </button>
+          <button
+            type="button"
+            className="btn-desk"
+            disabled={busy}
+            onClick={() => void handleCategorizeInbox()}
+          >
+            Categorize Inbox
+          </button>
+        </div>
       </div>
 
       <form onSubmit={handleIngest} style={{ display: "grid", gap: 8, marginBottom: 14 }}>
@@ -433,6 +510,48 @@ export function InboxDemoPanel({
           </p>
         </aside>
       </div>
+
+      {inboxSummary && (
+        <div
+          aria-label="Categorized inbox summary"
+          style={{
+            marginTop: 14,
+            padding: "12px 14px",
+            border: "2px solid var(--ink)",
+            background: "var(--tape)",
+            fontFamily: "var(--type)",
+            fontSize: 13,
+            display: "grid",
+            gap: 8,
+          }}
+        >
+          <div>
+            <strong>INBOX CATEGORIES:</strong> {inboxSummary.digest}
+          </div>
+          {inboxSummary.items.map((item) => (
+            <div
+              key={item.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                borderTop: "1px solid var(--ink)",
+                paddingTop: 6,
+              }}
+            >
+              <span>{item.tldr}</span>
+              <span
+                className={`chip ${item.risk_level === "SAFE" ? "" : "bad"}`}
+                style={{ padding: "2px 8px" }}
+              >
+                {item.risk_level}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
