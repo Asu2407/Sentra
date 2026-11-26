@@ -70,21 +70,34 @@ function TileIcon({ kind }: { kind: string }) {
   }
 }
 
+const IS_DEV = Boolean((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV);
+
 export function ChaosField({
   state,
+  mailScanning = false,
+  dropWarn = false,
+  showDevControls = IS_DEV,
   onStateChange,
 }: {
   state: ChaosState;
+  mailScanning?: boolean;
+  dropWarn?: boolean;
+  showDevControls?: boolean;
   onStateChange?: (s: ChaosState) => void;
 }) {
   const heroRef = useRef<HTMLDivElement | null>(null);
   const tileRefs = useRef<Array<HTMLDivElement | null>>([]);
   const stateRef = useRef<ChaosState>(state);
+  const dropWarnRef = useRef<boolean>(dropWarn);
   const [wordIdx, setWordIdx] = useState(0);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    dropWarnRef.current = dropWarn;
+  }, [dropWarn]);
 
   useEffect(() => {
     const reduce = Boolean(
@@ -143,7 +156,7 @@ export function ChaosField({
         const an = (i * 2 * Math.PI) / TILES.length + phase;
         const dep = (Math.sin(an) + 1) / 2;
         const sc = 0.78 + 0.32 * dep;
-        drops[i] += ((curState === "sorted" && t.scam ? 1 : 0) - drops[i]) * 0.07;
+        drops[i] += ((curState === "sorted" && t.scam && dropWarnRef.current ? 1 : 0) - drops[i]) * 0.07;
         const x = cx + Math.cos(an) * rx + smx * (8 + dep * 16);
         const y = cy + Math.sin(an) * ry * 0.88 + smy * (6 + dep * 12) + drops[i] * 260;
         const rot = Math.sin(an * 1.6 + i) * 9;
@@ -176,7 +189,9 @@ export function ChaosField({
     state === "thinking"
       ? "Sorting the pile before it reaches you."
       : state === "sorted"
-      ? "1 fake dropped. The rest wait for your stamp."
+      ? dropWarn
+        ? "1 fake dropped. The rest wait for your stamp."
+        : "Sorted. Everything waits for your stamp."
       : "Gemini reads it. Sentra holds it. You decide.";
 
   return (
@@ -199,15 +214,16 @@ export function ChaosField({
 
         {TILES.map((t, i) => {
           const busy = state === "thinking";
-          const ok = state === "sorted" && !t.scam;
-          const bad = state === "sorted" && t.scam;
+          const ok = state === "sorted" && (!t.scam || !dropWarn);
+          const bad = state === "sorted" && t.scam && dropWarn;
+          const mailPulse = mailScanning && t.kind === "mail";
           return (
             <div
               key={t.kind}
               ref={(el) => {
                 tileRefs.current[i] = el;
               }}
-              className={`orbit-tile${busy ? " busy" : ""}${ok ? " ok" : ""}${bad ? " bad" : ""}`}
+              className={`orbit-tile${busy ? " busy" : ""}${ok ? " ok" : ""}${bad ? " bad" : ""}${mailPulse ? " mail-pulse" : ""}`}
               style={{ ["--edge" as string]: t.edge }}
               aria-hidden="true"
             >
@@ -218,7 +234,7 @@ export function ChaosField({
         })}
       </div>
 
-      {onStateChange && (
+      {showDevControls && onStateChange && (
         <div className="orbit-row">
           <button
             type="button"
@@ -226,7 +242,7 @@ export function ChaosField({
             onClick={() => {
               onStateChange("thinking");
               setTimeout(() => onStateChange("sorted"), 2200);
-              setTimeout(() => onStateChange("idle"), 5200);
+              setTimeout(() => onStateChange("idle"), 5700);
             }}
           >
             Simulate a Gemini run

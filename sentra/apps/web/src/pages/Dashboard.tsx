@@ -8,8 +8,7 @@ import { GatePanel } from "../components/GatePanel.tsx";
 import { PunchCard } from "../components/PunchCard.tsx";
 import { ApiKeysPanel } from "../components/ApiKeysPanel.tsx";
 import { ChaosField, type ChaosState } from "../components/ChaosField.tsx";
-import { InboxDemoPanel } from "../components/InboxDemoPanel.tsx";
-import { VoiceAgentPanel } from "../components/VoiceAgentPanel.tsx";
+import { GeminiAssistant } from "../components/assistant/GeminiAssistant.tsx";
 import type {
   AuditEntryView,
   ExecutionView,
@@ -38,6 +37,8 @@ export function Dashboard() {
   const [authUser, setAuthUser] = useState<string | null>(null);
   const [mode, setMode] = useState<"sandbox" | "live">("sandbox");
   const [chaosState, setChaosState] = useState<ChaosState>("idle");
+  const [mailScanning, setMailScanning] = useState(false);
+  const [dropWarn, setDropWarn] = useState(false);
   const [benchmark, setBenchmark] = useState<{ blocked: number; total: number } | null>(null);
 
   const animatingRef = useRef(false);
@@ -251,7 +252,26 @@ export function Dashboard() {
           setAuthUser(null);
         }}
       />
-      <ChaosField state={chaosState} onStateChange={setChaosState} />
+      <ChaosField
+        state={chaosState}
+        mailScanning={mailScanning}
+        dropWarn={dropWarn}
+        onStateChange={setChaosState}
+      />
+
+      {csrf && (
+        <GeminiAssistant
+          csrf={csrf}
+          quarantineCount={quarantine.length}
+          onChaosChange={(s, opts) => {
+            setChaosState(s);
+            setDropWarn(Boolean(opts?.dropWarn));
+          }}
+          onMailScanChange={setMailScanning}
+          onActionComplete={() => fetchState(false)}
+        />
+      )}
+
       <section className="intro">
         <h1>Approval console</h1>
         <p>
@@ -293,22 +313,6 @@ export function Dashboard() {
       </main>
 
       {benchmark && <PunchCard blocked={benchmark.blocked} total={benchmark.total} />}
-
-      {csrf && (
-        <VoiceAgentPanel
-          csrf={csrf}
-          onChaosChange={setChaosState}
-          onActionComplete={() => fetchState(false)}
-        />
-      )}
-
-      {csrf && (
-        <InboxDemoPanel
-          csrf={csrf}
-          quarantineCount={quarantine.length}
-          onIngested={() => fetchState(false)}
-        />
-      )}
 
       {csrf && <ApiKeysPanel csrf={csrf} />}
 

@@ -29,6 +29,7 @@ import {
   ScamDetector,
   SentraSecurityError,
   TaintTracker,
+  decryptToken,
   encryptToken,
   getExecutionRecordModel,
   getOAuthTokenModel,
@@ -703,6 +704,7 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
   const OAUTH_STATE_COOKIE = "sentra_oauth_state";
   const GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.readonly",
     ...(process.env.SENTRA_ENABLE_GMAIL_SCOPE === "true"
       ? ["https://www.googleapis.com/auth/gmail.send"]
       : []),
@@ -873,6 +875,170 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
       }
     }
   );
+
+  interface GmailFetchedEmail {
+    id: string;
+    sender: string;
+    subject: string;
+    body: string;
+    date: string;
+  }
+
+  function decodeBase64Url(input: string): string {
+    const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
+    return Buffer.from(normalized, "base64").toString("utf8");
+  }
+
+  function extractGmailTextBody(payload: any): string {
+    if (!payload) return "";
+    if (payload.mimeType === "text/plain" && payload.body?.data) {
+      return decodeBase64Url(payload.body.data);
+    }
+    if (Array.isArray(payload.parts)) {
+      for (const part of payload.parts) {
+        const found = extractGmailTextBody(part);
+        if (found) return found;
+      }
+    }
+    if (payload.body?.data && (!payload.mimeType || payload.mimeType.startsWith("text/"))) {
+      return decodeBase64Url(payload.body.data);
+    }
+    return "";
+  }
+
+  async function resolveGoogleReadToken(): Promise<string | null> {
+    const envToken =
+      process.env.GMAIL_ACCESS_TOKEN?.trim() || process.env.GOOGLE_ACCESS_TOKEN?.trim();
+    if (envToken) return envToken;
+    const tokenDoc = await OAuthToken.findById("google").lean();
+    if (!tokenDoc?.access_token) return null;
+    const isExpired = Boolean(tokenDoc.expires_at && Date.now() >= tokenDoc.expires_at - 30_000);
+    if (!isExpired) {
+      return decryptToken(tokenDoc.access_token, tokenEncryptionKey);
+    }
+    if (!tokenDoc.refresh_token) return null;
+    const clientId = process.env.GOOGLE_CLIENT_ID?.trim() ?? "";
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim() ?? "";
+    if (!clientId || !clientSecret) return null;
+    try {
+      const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: decryptToken(tokenDoc.refresh_token, tokenEncryptionKey),
+          grant_type: "refresh_token",
+        }),
+      });
+      if (!refreshRes.ok) return null;
+      const refreshed = (await refreshRes.json()) as {
+        access_token?: string;
+        expires_in?: number;
+      };
+      if (!refreshed.access_token) return null;
+      await OAuthToken.findOneAndUpdate(
+        { _id: "google" },
+        {
+          $set: {
+            access_token: encryptToken(refreshed.access_token, tokenEncryptionKey),
+            expires_at: refreshed.expires_in
+              ? Date.now() + refreshed.expires_in * 1000
+              : null,
+            updated_at: new Date().toISOString(),
+          },
+        }
+      );
+      return refreshed.access_token;
+    } catch {
+      return null;
+    }
+  }
+
+  async function fetchRecentGmailMessages(limit = 8): Promise<{
+    connected: boolean;
+    needs_reauth: boolean;
+    reason?: string;
+    messages: GmailFetchedEmail[];
+  }> {
+    const accessToken = await resolveGoogleReadToken();
+    if (!accessToken) {
+      return {
+        connected: false,
+        needs_reauth: false,
+        reason: "Google account not connected. Click Connect Google in the top bar.",
+        messages: [],
+      };
+    }
+    try {
+      const listRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${limit}&q=${encodeURIComponent("in:inbox")}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (listRes.status === 401 || listRes.status === 403) {
+        return {
+          connected: true,
+          needs_reauth: true,
+          reason:
+            "Gmail read permission not granted yet. Click Reconnect Google in the top bar to grant gmail.readonly.",
+          messages: [],
+        };
+      }
+      if (!listRes.ok) {
+        return {
+          connected: true,
+          needs_reauth: false,
+          reason: `Gmail API returned ${listRes.status}.`,
+          messages: [],
+        };
+      }
+      const listJson = (await listRes.json()) as {
+        messages?: Array<{ id: string }>;
+      };
+      const refs = (listJson.messages ?? []).slice(0, limit);
+      const fetched = await Promise.all(
+        refs.map(async (ref): Promise<GmailFetchedEmail | null> => {
+          try {
+            const msgRes = await fetch(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(ref.id)}?format=full`,
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (!msgRes.ok) return null;
+            const msg = (await msgRes.json()) as {
+              id: string;
+              snippet?: string;
+              payload?: {
+                headers?: Array<{ name?: string; value?: string }>;
+              };
+            };
+            const headers = msg.payload?.headers ?? [];
+            const headerVal = (name: string) =>
+              headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
+            const sender = headerVal("From") || "unknown@gmail.com";
+            const subject = headerVal("Subject") || "(No subject)";
+            const date = headerVal("Date") || "";
+            const rawBody = extractGmailTextBody(msg.payload) || msg.snippet || "";
+            const body = rawBody.replace(/\r\n/g, "\n").trim().slice(0, 1800);
+            return { id: `GMAIL_${msg.id}`, sender, subject, body, date };
+          } catch {
+            return null;
+          }
+        })
+      );
+      return {
+        connected: true,
+        needs_reauth: false,
+        messages: fetched.filter((m): m is GmailFetchedEmail => m !== null),
+      };
+    } catch (err) {
+      return {
+        connected: true,
+        needs_reauth: false,
+        reason: err instanceof Error ? err.message : "Failed to reach Gmail API",
+        messages: [],
+      };
+    }
+  }
 
   // Streamable HTTP MCP endpoint (protected by bearer token + Host/Origin DNS-rebinding checks)
   const checkMcpHostAndOrigin = (req: Request, res: Response, next: NextFunction): void => {
@@ -1080,6 +1246,23 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
     }
   );
 
+  // Fetch recent emails directly from connected Gmail inbox (requires session)
+  app.get(
+    "/api/inbox/gmail",
+    requireSession,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const gmail = await fetchRecentGmailMessages(8);
+        res.json({
+          ...gmail,
+          source: gmail.messages.length > 0 ? "gmail" : "demo",
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   // Categorize & quarantine inbox batch (SAFE / SUSPICIOUS / LIKELY_SCAM)
   app.post(
     "/api/inbox/summarize",
@@ -1087,7 +1270,11 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
     requireAuth,
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const summary = scamDetector.summarizeInbox();
+        const gmail = await fetchRecentGmailMessages(8);
+        const usingGmail = gmail.messages.length > 0;
+        const summary = usingGmail
+          ? scamDetector.summarizeInbox(gmail.messages)
+          : scamDetector.summarizeInbox();
         const quarantinedIds: string[] = [];
         const actor = req.approverSession?.sub ?? APPROVER_USER_ID;
 
@@ -1112,7 +1299,12 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
           }
         }
 
-        res.json({ ...summary, quarantined_ids: quarantinedIds });
+        res.json({
+          ...summary,
+          quarantined_ids: quarantinedIds,
+          source: usingGmail ? "gmail" : "demo",
+          gmail_note: usingGmail ? undefined : gmail.reason,
+        });
       } catch (err) {
         next(err);
       }
@@ -1122,6 +1314,18 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
   // Humanized voice summary via ElevenLabs (requires session + CSRF, never exposes API key)
   const speakBodySchema = z.object({
     text: z.string().trim().min(1).max(1000),
+  });
+  let lastVoiceError: string | null = null;
+  let voiceQuotaExhausted = false;
+
+  app.get("/api/voice/status", requireSession, (_req: Request, res: Response) => {
+    const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+    res.json({
+      elevenlabs_configured: Boolean(apiKey),
+      provider: apiKey && !voiceQuotaExhausted ? "elevenlabs" : "browser_fallback",
+      quota_exhausted: voiceQuotaExhausted,
+      last_error: lastVoiceError,
+    });
   });
 
   app.post(
@@ -1137,7 +1341,15 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
         }
         const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
         if (!apiKey) {
-          res.status(503).json({ detail: "ElevenLabs voice is not configured" });
+          res.status(503).json({
+            detail: "ElevenLabs voice is not configured — using browser voice fallback",
+          });
+          return;
+        }
+        if (voiceQuotaExhausted) {
+          res.status(429).json({
+            detail: "ElevenLabs quota exhausted — using browser voice fallback",
+          });
           return;
         }
         const voiceId =
@@ -1158,9 +1370,25 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
           }
         );
         if (!ttsRes.ok) {
-          res.status(502).json({ detail: "ElevenLabs TTS request failed" });
+          const errText = await ttsRes.text().catch(() => "");
+          const isQuota =
+            ttsRes.status === 401 ||
+            ttsRes.status === 402 ||
+            ttsRes.status === 429 ||
+            /quota|credit|limit/i.test(errText);
+          voiceQuotaExhausted = isQuota;
+          lastVoiceError = isQuota
+            ? `ElevenLabs quota/credits exhausted (HTTP ${ttsRes.status})`
+            : `ElevenLabs HTTP ${ttsRes.status}`;
+          res.status(isQuota ? 429 : 502).json({
+            detail: isQuota
+              ? "ElevenLabs quota exhausted — using browser voice fallback"
+              : "ElevenLabs TTS request failed",
+          });
           return;
         }
+        voiceQuotaExhausted = false;
+        lastVoiceError = null;
         const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
         res.setHeader("Content-Type", "audio/mpeg");
         res.setHeader("Cache-Control", "no-store");
@@ -1288,7 +1516,11 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
             };
           }
           if (name === "summarize_inbox") {
-            const summary = scamDetector.summarizeInbox();
+            const gmail = await fetchRecentGmailMessages(8);
+            const usingGmail = gmail.messages.length > 0;
+            const summary = usingGmail
+              ? scamDetector.summarizeInbox(gmail.messages)
+              : scamDetector.summarizeInbox();
             const quarantinedIds: string[] = [];
             for (const item of summary.items) {
               if (item.risk_level === "LIKELY_SCAM") {
@@ -1309,7 +1541,12 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
                 quarantinedIds.push(item.id);
               }
             }
-            return { ...summary, quarantined_ids: quarantinedIds };
+            return {
+              ...summary,
+              quarantined_ids: quarantinedIds,
+              source: usingGmail ? "gmail" : "demo",
+              gmail_note: usingGmail ? undefined : gmail.reason,
+            };
           }
           if (name === "scan_email") {
             return scamDetector.scanEmail(
@@ -1389,6 +1626,10 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
               },
               contents,
               tools,
+              generationConfig: {
+                maxOutputTokens: 280,
+                temperature: 0.2,
+              },
             }),
           });
           if (!gRes.ok) {
