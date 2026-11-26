@@ -16,7 +16,11 @@ import {
   ApiKeyStore,
   AuditLedger,
   CompositeExecutionAdapter,
+  ConflictDetector,
+  EmailGuard,
   OOBExecutionGate,
+  PROPOSAL_TTL_SECONDS,
+  SECURITY_ALERT_LOW_TRUST,
   SERVER_INSTRUCTIONS,
   SERVER_NAME,
   SRC_STRANGER_EMAIL,
@@ -1122,6 +1126,274 @@ export async function createApp(options?: { authConfig?: AuthConfig }) {
         res.setHeader("Content-Type", "audio/mpeg");
         res.setHeader("Cache-Control", "no-store");
         res.send(audioBuffer);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // Voice-to-Gemini-to-Sentra-MCP agent loop (session + CSRF required, stage-only tools)
+  const agentAskSchema = z.object({
+    prompt: z.string().trim().min(1).max(2000),
+  });
+
+  app.post(
+    "/api/agent/ask",
+    actionLimiter,
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const parsed = agentAskSchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ detail: "prompt is required (1-2000 chars)" });
+          return;
+        }
+        const apiKey = process.env.GEMINI_API_KEY?.trim();
+        if (!apiKey) {
+          res.status(503).json({ detail: "GEMINI_API_KEY is not configured" });
+          return;
+        }
+
+        const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const conflictDetector = new ConflictDetector();
+        const emailGuard = new EmailGuard(taintTracker, oobGate);
+
+        const tools = [
+          {
+            functionDeclarations: [
+              {
+                name: "detect_conflicts",
+                description:
+                  "Runs deterministic checks across time buffers, medication intervals, and dinner budget caps.",
+                parameters: { type: "OBJECT", properties: {} },
+              },
+              {
+                name: "generate_replan_options",
+                description:
+                  "Calculates safe schedule and meal adjustments using deterministic weights.",
+                parameters: { type: "OBJECT", properties: {} },
+              },
+              {
+                name: "summarize_inbox",
+                description:
+                  "Summarizes inbox emails, detects scams/phishing, and quarantines LIKELY_SCAM messages in MongoDB.",
+                parameters: { type: "OBJECT", properties: {} },
+              },
+              {
+                name: "scan_email",
+                description:
+                  "Inspects a single email for lookalike domains, urgency cues, and credential traps.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    sender: { type: "STRING" },
+                    subject: { type: "STRING" },
+                    body: { type: "STRING" },
+                  },
+                  required: ["sender", "subject", "body"],
+                },
+              },
+              {
+                name: "propose_action",
+                description:
+                  "Stage-only tool. Holds a write action for human approval. Use source_id='SRC_USER_CHAT' for user requests.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    action_type: { type: "STRING" },
+                    summary: { type: "STRING" },
+                    diff_preview: { type: "OBJECT" },
+                    source_id: { type: "STRING" },
+                  },
+                  required: ["action_type", "summary", "source_id"],
+                },
+              },
+              {
+                name: "propose_send_email",
+                description:
+                  "Intercepts outbound emails and stages a human approval card.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    recipient: { type: "STRING" },
+                    subject: { type: "STRING" },
+                    body: { type: "STRING" },
+                    attachments: { type: "ARRAY", items: { type: "STRING" } },
+                    source_id: { type: "STRING" },
+                  },
+                  required: ["recipient", "subject", "body", "source_id"],
+                },
+              },
+            ],
+          },
+        ];
+
+        const executeSentraTool = async (
+          name: string,
+          args: Record<string, unknown>
+        ): Promise<Record<string, unknown>> => {
+          if (name === "detect_conflicts") {
+            const conflicts = [
+              conflictDetector.checkTransitAndMedication(),
+              conflictDetector.checkDinnerBudget(),
+            ].filter(Boolean);
+            return { status: "CONFLICTS_FOUND", conflicts };
+          }
+          if (name === "generate_replan_options") {
+            return {
+              recommended_option: {
+                id: "OPT_A",
+                summary: "Move breakfast to 05:20 AM & pill to 05:50 AM; cap dinner at ₹160.",
+              },
+            };
+          }
+          if (name === "summarize_inbox") {
+            const summary = scamDetector.summarizeInbox();
+            const quarantinedIds: string[] = [];
+            for (const item of summary.items) {
+              if (item.risk_level === "LIKELY_SCAM") {
+                if (!(await QuarantineItem.findById(item.id).lean())) {
+                  await QuarantineItem.create({
+                    _id: item.id,
+                    id: item.id,
+                    title: item.subject,
+                    reason: item.flags.slice(0, 2).join("; ") || item.plain_warning,
+                    status: "QUARANTINED",
+                  });
+                  await auditLedger.append(
+                    "system",
+                    `quarantined ${item.id} (${item.sender}): ${item.risk_level}`,
+                    true
+                  );
+                }
+                quarantinedIds.push(item.id);
+              }
+            }
+            return { ...summary, quarantined_ids: quarantinedIds };
+          }
+          if (name === "scan_email") {
+            return scamDetector.scanEmail(
+              String(args.sender ?? ""),
+              String(args.subject ?? ""),
+              String(args.body ?? "")
+            ) as unknown as Record<string, unknown>;
+          }
+          if (name === "propose_action") {
+            const actionType = String(args.action_type ?? "create_event");
+            const summary = String(args.summary ?? "Agent proposed action");
+            const sourceId = String(args.source_id ?? SRC_USER_CHAT);
+            const diffPreview =
+              args.diff_preview && typeof args.diff_preview === "object"
+                ? (args.diff_preview as Record<string, unknown>)
+                : { summary };
+            const { allowed, reason } = await taintTracker.checkExecutionPermission(
+              sourceId,
+              actionType
+            );
+            if (!allowed) {
+              await auditLedger.append(
+                sourceId,
+                `BLOCKED '${actionType}' by TaintTracker: ${reason}`,
+                true
+              );
+              return { status: "BLOCKED_BY_TAINT_TRACKER", reason: SECURITY_ALERT_LOW_TRUST };
+            }
+            const proposalId = `PROP_${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+            await oobGate.stageProposal(
+              proposalId,
+              actionType,
+              summary,
+              diffPreview,
+              sourceId
+            );
+            const uiBase = (
+              process.env.SENTRA_UI_URL?.trim() || "http://127.0.0.1:8001"
+            ).replace(/\/+$/, "");
+            return {
+              status: "STAGED_FOR_APPROVAL",
+              proposal_id: proposalId,
+              review_url: `${uiBase}/approve/${proposalId}`,
+              expires_in_seconds: PROPOSAL_TTL_SECONDS,
+            };
+          }
+          if (name === "propose_send_email") {
+            return (await emailGuard.interceptOutboundEmail(
+              String(args.recipient ?? ""),
+              String(args.subject ?? ""),
+              String(args.body ?? ""),
+              Array.isArray(args.attachments) ? args.attachments.map(String) : [],
+              String(args.source_id ?? SRC_STRANGER_EMAIL)
+            )) as unknown as Record<string, unknown>;
+          }
+          return { error: `Unknown tool: ${name}` };
+        };
+
+        const contents: Array<Record<string, unknown>> = [
+          { role: "user", parts: [{ text: parsed.data.prompt }] },
+        ];
+        const toolCalls: Array<{ name: string; result: Record<string, unknown> }> = [];
+        let replyText = "";
+
+        for (let round = 0; round < 4; round++) {
+          const gRes = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              systemInstruction: {
+                parts: [
+                  {
+                    text:
+                      "You are Sentra's voice-enabled AI assistant. Use Sentra's tools to inspect conflicts, summarize the inbox, and stage any write actions with propose_action (source_id='SRC_USER_CHAT' for direct user requests). Never claim a write executed—explain clearly in 2-3 natural spoken sentences what you checked, quarantined, or staged for human approval.",
+                  },
+                ],
+              },
+              contents,
+              tools,
+            }),
+          });
+          if (!gRes.ok) {
+            res.status(502).json({ detail: "Gemini request failed" });
+            return;
+          }
+          const gJson = (await gRes.json()) as {
+            candidates?: Array<{
+              content?: { parts?: Array<{ text?: string; functionCall?: { name: string; args?: Record<string, unknown> } }> };
+            }>;
+          };
+          const parts = gJson.candidates?.[0]?.content?.parts ?? [];
+          contents.push({ role: "model", parts });
+
+          const calls = parts.filter((p) => p.functionCall);
+          if (calls.length === 0) {
+            replyText = parts
+              .map((p) => p.text ?? "")
+              .join(" ")
+              .trim();
+            break;
+          }
+
+          const responseParts: Array<Record<string, unknown>> = [];
+          for (const part of calls) {
+            const fc = part.functionCall!;
+            const toolResult = await executeSentraTool(fc.name, fc.args ?? {});
+            toolCalls.push({ name: fc.name, result: toolResult });
+            responseParts.push({
+              functionResponse: {
+                name: fc.name,
+                response: toolResult,
+              },
+            });
+          }
+          contents.push({ role: "user", parts: responseParts });
+        }
+
+        res.json({
+          reply:
+            replyText ||
+            "Completed Sentra analysis. Check the Approval console for staged items.",
+          tool_calls: toolCalls,
+        });
       } catch (err) {
         next(err);
       }

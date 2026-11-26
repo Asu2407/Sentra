@@ -31,6 +31,8 @@ npm test
 | `SENTRA_ENABLE_GMAIL_SCOPE` | `false` | Set `true` to also request `https://www.googleapis.com/auth/gmail.send` during Google OAuth. |
 | `ELEVENLABS_API_KEY` | *(optional)* | ElevenLabs API key for humanized TTS voice summaries on `POST /api/voice/speak`. |
 | `ELEVENLABS_VOICE_ID` | `21m00Tcm4TlvDq8ikWAM` | Optional ElevenLabs voice ID for scam/email voice summaries. |
+| `GEMINI_API_KEY` | *(optional)* | Gemini API key powering the dashboard Voice-to-MCP assistant (`POST /api/agent/ask`). |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used by `POST /api/agent/ask`. |
 
 ### Minimum Google OAuth Scopes
 - `https://www.googleapis.com/auth/calendar.events` (create/update approved calendar events)

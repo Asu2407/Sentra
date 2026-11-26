@@ -630,5 +630,15 @@ describe("Sentra Express API + Auth + E2E", () => {
       .set("X-Sentra-CSRF", csrf)
       .send({ text: ingestRes.body.scan.spoken_summary });
     expect(noKeyVoice.status).toBe(503);
+
+    // /api/agent/ask requires session + CSRF, and returns 503 when GEMINI_API_KEY is unset
+    const unauthAgent = await request(app).post("/api/agent/ask").send({ prompt: "Check conflicts" });
+    expect(unauthAgent.status).toBe(401);
+
+    const noKeyAgent = await agent
+      .post("/api/agent/ask")
+      .set("X-Sentra-CSRF", csrf)
+      .send({ prompt: "Check conflicts" });
+    expect(noKeyAgent.status).toBe(503);
   });
 });

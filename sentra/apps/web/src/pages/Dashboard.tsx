@@ -8,6 +8,7 @@ import { GatePanel } from "../components/GatePanel.tsx";
 import { PunchCard } from "../components/PunchCard.tsx";
 import { ApiKeysPanel } from "../components/ApiKeysPanel.tsx";
 import { InboxDemoPanel } from "../components/InboxDemoPanel.tsx";
+import { VoiceAgentPanel } from "../components/VoiceAgentPanel.tsx";
 import type {
   AuditEntryView,
   ExecutionView,
@@ -289,6 +290,10 @@ export function Dashboard() {
       </main>
 
       {benchmark && <PunchCard blocked={benchmark.blocked} total={benchmark.total} />}
+
+      {csrf && (
+        <VoiceAgentPanel csrf={csrf} onActionComplete={() => fetchState(false)} />
+      )}
 
       {csrf && (
         <InboxDemoPanel csrf={csrf} onIngested={() => fetchState(false)} />
